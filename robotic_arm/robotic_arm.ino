@@ -4,15 +4,22 @@
 //================ servo constants ==================
 
 //servo pins
-const int SERVO_PIN[6] = {8, 9, 10, 11, 12, 13};
+const int SERVO_PIN[6] = {8, 9, 10, 11, 12, 13}; //replaced 8-13
 //control signal max and mins
 const int MG996R_MIN = 650;
 const int MG996R_MAX = 2350;
 const int MG5521_MIN = 500;
 const int MG5521_MAX = 2500;
 //degrees of freedom safety restrictions
-const int SERVO_ANGLE_MAX[6] = {180, 180, 180, 180, 180, 110};
+const int SERVO_ANGLE_MAX[6] = {180, 180, 180, 180, 180, 105};
 const int SERVO_ANGLE_MIN[6] = {10, 0, 20, 10, 0, 60};
+
+//================ motor constants ==================
+//motor pins
+const int LEFT_MOTOR_POS = 4;
+const int LEFT_MOTOR_NEG = 5;
+const int RIGHT_MOTOR_POS = 6;
+const int RIGHT_MOTOR_NEG = 7;
 
 //================ calculation constants ============
 
@@ -29,7 +36,7 @@ const int DESIREDX_MAX = 16;
 const int DESIREDROT_MAX = 180;
 const int DESIREDROT_MIN = 0;
 
-//================ servo variables ===================
+//================ servo/motor variables ============
 
 //servo
 Servo SERVO[6];
@@ -39,8 +46,9 @@ volatile int servo_angle_desired[6] = {90, 30, 30, 180, 0, 60};
 //desired coordinates
 volatile double desiredX;
 volatile double desiredY;
-volatile int desiredRot;
-volatile int claw;
+volatile int desiredRot;    // 0: right, 180: left
+volatile int claw;          // 0: open, 1:closed
+volatile int moveDir;           // 0: stop, 1: forward, 2: reverse, 3: left, 4: right
 
 //================ XBee variables ===================
 
@@ -63,6 +71,12 @@ void setup() {
   SERVO[4].attach(SERVO_PIN[4], MG996R_MIN, MG996R_MAX);
   SERVO[5].attach(SERVO_PIN[5], MG996R_MIN, MG996R_MAX);
 
+  //initialize motor pins
+  pinMode(LEFT_MOTOR_POS, OUTPUT);
+  pinMode(LEFT_MOTOR_NEG, OUTPUT);
+  pinMode(RIGHT_MOTOR_POS, OUTPUT);
+  pinMode(RIGHT_MOTOR_NEG, OUTPUT);
+  
   //reset position
   positionReset();
   controlServo();
@@ -81,12 +95,17 @@ void loop() {
 
   //write to servos
   controlServo();
+
+  //write to motors
+  movementChange();
 }
 
 void positionReset() {
   desiredX = 0;
   desiredY = 5;
   desiredRot = 90;
+  claw = 0;
+  moveDir = 0;
 }
 
 void positionChange() {
@@ -102,6 +121,44 @@ void positionChange() {
 void controlServo() {
   for (int i = 0; i < 6; i++) {
     SERVO[i].write(servo_angle[i]);
+  }
+}
+
+void movementChange() {
+  switch (moveDir) {
+    case 1:
+      controlMotor(LEFT_MOTOR_POS, LEFT_MOTOR_NEG, 1);
+      controlMotor(RIGHT_MOTOR_POS, RIGHT_MOTOR_NEG, 1);
+      break;
+    case 2:
+      controlMotor(LEFT_MOTOR_POS, LEFT_MOTOR_NEG, -1);
+      controlMotor(RIGHT_MOTOR_POS, RIGHT_MOTOR_NEG, -1);
+      break;
+    case 3:
+      controlMotor(LEFT_MOTOR_POS, LEFT_MOTOR_NEG, -1);
+      controlMotor(RIGHT_MOTOR_POS, RIGHT_MOTOR_NEG, 1);
+      break;
+    case 4:
+      controlMotor(LEFT_MOTOR_POS, LEFT_MOTOR_NEG, 1);
+      controlMotor(RIGHT_MOTOR_POS, RIGHT_MOTOR_NEG, -1);
+      break;
+    default:
+      controlMotor(LEFT_MOTOR_POS, LEFT_MOTOR_NEG, 0);
+      controlMotor(RIGHT_MOTOR_POS, RIGHT_MOTOR_NEG, 0);
+      break;
+  }
+}
+
+void controlMotor(int pos_pin, int neg_pin, int dir) {
+  if (dir == 0) {
+    digitalWrite(pos_pin, LOW);
+    digitalWrite(neg_pin, LOW);
+  } else if (dir == 1) {
+    digitalWrite(neg_pin, LOW);
+    digitalWrite(pos_pin, HIGH);
+  } else {
+    digitalWrite(pos_pin, LOW);
+    digitalWrite(neg_pin, HIGH);
   }
 }
 
@@ -127,5 +184,6 @@ void getSignal() {
     desiredY = (rx16.getData(2) == 0) ? desiredY : -desiredY;
     desiredRot = rx16.getData(4);
     claw = rx16.getData(5);
+    moveDir = rx16.getData(6);
   }
 }
