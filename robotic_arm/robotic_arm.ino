@@ -6,13 +6,11 @@
 //servo pins
 const int SERVO_PIN[6] = {8, 9, 10, 11, 12, 13}; //replaced 8-13
 //control signal max and mins
-const int MG996R_MIN = 650;
-const int MG996R_MAX = 2350;
-const int MG5521_MIN = 500;
-const int MG5521_MAX = 2500;
+const int SERVO_MIN[6] = {720, 480, 480, 630, 720, 750};
+const int SERVO_MAX[6] = {2330, 2520, 2520, 2300, 2330, 2330};
 //degrees of freedom safety restrictions
 const int SERVO_ANGLE_MAX[6] = {180, 180, 180, 180, 180, 110};
-const int SERVO_ANGLE_MIN[6] = {10, 0, 20, 10, 0, 60};
+const int SERVO_ANGLE_MIN[6] = {0, 0, 30, 0, 0, 60};
 
 //================ motor constants ==================
 //motor pins
@@ -64,12 +62,9 @@ void setup() {
   xbee.setSerial(Serial);
 
   //initialize servo pins
-  SERVO[0].attach(SERVO_PIN[0], MG996R_MIN, MG996R_MAX);
-  SERVO[1].attach(SERVO_PIN[1], MG5521_MIN, MG5521_MAX);
-  SERVO[2].attach(SERVO_PIN[2], MG5521_MIN, MG5521_MAX);
-  SERVO[3].attach(SERVO_PIN[3], MG996R_MIN, MG996R_MAX);
-  SERVO[4].attach(SERVO_PIN[4], MG996R_MIN, MG996R_MAX);
-  SERVO[5].attach(SERVO_PIN[5], MG996R_MIN, MG996R_MAX);
+  for (int i = 0; i < 6; i++) {
+    SERVO[i].attach(SERVO_PIN[i], SERVO_MIN[i], SERVO_MAX[i]);
+  }
 
   //initialize motor pins
   pinMode(LEFT_MOTOR_POS, OUTPUT);
@@ -101,8 +96,8 @@ void loop() {
 }
 
 void positionReset() {
-  desiredX = 0;
-  desiredY = 5;
+  desiredX = 1;
+  desiredY = 4;
   desiredRot = 90;
   claw = 0;
   moveDir = 0;
@@ -170,7 +165,7 @@ void calculateAngles() {
   servo_angle_desired[0] = double(desiredRot) / (DESIREDROT_MAX - DESIREDROT_MIN) * (SERVO_ANGLE_MAX[0] - SERVO_ANGLE_MIN[0]) + SERVO_ANGLE_MIN[0];
   servo_angle_desired[1] = 180 - (thetaA + thetaDesired);
   servo_angle_desired[2] = thetaB;
-  servo_angle_desired[3] = thetaA + thetaB + thetaDesired - 10;
+  servo_angle_desired[3] = thetaA + thetaB + thetaDesired;
   servo_angle[5] = (claw == 1) ? SERVO_ANGLE_MAX[5] : SERVO_ANGLE_MIN[5];
 }
 
