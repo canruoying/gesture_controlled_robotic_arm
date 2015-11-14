@@ -11,7 +11,7 @@ const int MG996R_MAX = 2350;
 const int MG5521_MIN = 500;
 const int MG5521_MAX = 2500;
 //degrees of freedom safety restrictions
-const int SERVO_ANGLE_MAX[6] = {180, 180, 180, 180, 180, 105};
+const int SERVO_ANGLE_MAX[6] = {180, 180, 180, 180, 180, 110};
 const int SERVO_ANGLE_MIN[6] = {10, 0, 20, 10, 0, 60};
 
 //================ motor constants ==================
@@ -29,7 +29,7 @@ const double ARM_10_LENGTH = 9.8;
 //pi
 const double pi = 3.14;
 //reach
-const int DESIREDY_MIN = -8;
+const int DESIREDY_MIN = -10;
 const int DESIREDY_MAX = 12;
 const int DESIREDX_MIN = 4;
 const int DESIREDX_MAX = 16;
@@ -111,7 +111,7 @@ void positionReset() {
 void positionChange() {
   for (int i = 0; i < 6; i++) {
     if (servo_angle[i] != servo_angle_desired[i]) {
-      servo_angle[i] = (servo_angle[i] > servo_angle_desired[i]) ? servo_angle[i] - 1 : servo_angle[i] + 1;
+      servo_angle[i] = servo_angle_desired[i]; //(servo_angle[i] > servo_angle_desired[i]) ? servo_angle[i] - 1 : servo_angle[i] + 1;
     }
     servo_angle[i] = (servo_angle[i] > SERVO_ANGLE_MAX[i]) ? SERVO_ANGLE_MAX[i] : servo_angle[i];
     servo_angle[i] = (servo_angle[i] < SERVO_ANGLE_MIN[i]) ? SERVO_ANGLE_MIN[i] : servo_angle[i];
