@@ -4,55 +4,82 @@
 #include <Adafruit_LSM9DS0.h>
 #include <Adafruit_Sensor.h>
 
-XBee xbee = XBee();
 
-const int LSMSCLK = 8;
-const int LSMMISO = 9;
+//================ accelerometer constants ==========
+
+// accelerometer pins
+const int ACCEL_SUPPLY = 12;
+const int LSMSCLK = 11;
+const int LSMMISO = 7;
 const int LSMMOSI = 10;
-const int LSMXMCS = 11;
-const int LSMGCS = 12;
-
-const double ARM_12_LENGTH = 13;
-
-Adafruit_LSM9DS0 lsm = Adafruit_LSM9DS0(LSMSCLK, LSMMISO, LSMMOSI, LSMXMCS, LSMGCS);
-
+const int LSMXMCS = 8;
+const int LSMGCS = 9;
+// accelerometer bias/sensitivity
 const int ACCEL_BIAS[3] = {-1215, 107, -500};
 const double ACCEL_SENSITIVITY[3] = {16025, 16123, 16485};
-const int ACCEL_SUPPLY = 7;
 
-double accel[3];
-double prevAccel[3] = {0, 0, 0};
+//================ flex sensor constants ============
 
-const double pi = 3.14;
+// flex sensor pins
+const int FLEX_SENSOR_HIGH[3] = {6, 5, 4};
+const int FLEX_SENSOR_LOW[3] = {A0, A2, A4};
+const int FLEX_SENSOR_PIN[3] = {A1, A3, A5};
 
-uint8_t payload[7];
-Tx16Request tx = Tx16Request(0x1234, payload, sizeof(payload));
-TxStatusResponse txStatus = TxStatusResponse();
+//================ calculation constants ============
 
-double pitch;
-double roll;
-
-//reach
+// reach restrictions
 const int DESIREDA_MIN = 18;
 const int DESIREDA_MAX = 28;
 const int DESIREDB_MIN = -10;
 const int DESIREDB_MAX = 10;
 const int DESIREDY_MIN = -5;
 const int DESIREDY_MAX = 11;
+const int DESIREDCLAWROT_MIN = 0;
+const int DESIREDCLAWROT_MAX = 180;
+// armature lengths for servos 12
+const double ARM_12_LENGTH = 13;
+// pi
+const double pi = 3.14;
 
-volatile double desiredA;
-volatile double desiredB;
-volatile double desiredX;
-volatile double desiredY;
-volatile double desiredRot;    // 0: right, 180: left
-volatile int claw;          // 0: open, 1:closed
-volatile int moveDir;           // 0: stop, 1: forward, 2: reverse, 3: left, 4: right
+//================ XBee constants ===================
 
-const int FLEX_SENSOR_HIGH = A0;
-const int FLEX_SENSOR_LOW = A1;
-const int FLEX_SENSOR_PIN = A2;
+// status light pin
 const int STATUS_LED_PIN = 13;
 
+//================ XBee variables ===================
+
+XBee xbee = XBee();
+uint8_t payload[8];
+Tx16Request tx = Tx16Request(0x1234, payload, sizeof(payload));
+TxStatusResponse txStatus = TxStatusResponse();
+
+//================ accelerometer variables ==========
+
+Adafruit_LSM9DS0 lsm = Adafruit_LSM9DS0(LSMSCLK, LSMMISO, LSMMOSI, LSMXMCS, LSMGCS);
+// accelerometer data
+double accel[3];
+// previous accelerometer data for filtering
+double prevAccel[3] = {0, 0, 0};
+// pitch/roll angles
+double pitch;
+double roll;
+
+//================ servo/motor variables ============
+
+// desired coordinates
+volatile double desiredA;      // pos: forward, neg: aft
+volatile double desiredB;      // pos: starboard, neg: port
+volatile double desiredX;      // pos: forward (minus arm 12 length from A), neg: aft
+volatile double desiredY;      // pos: above, neg: below
+volatile double desiredRot;    // 0: starboard, 180: port
+volatile double desiredClawRot;// 0: servo above, 180: servo below
+volatile double mode;          // 0: control AB axes, 1: control Y axes
+volatile int claw;             // 0: open, 1:closed
+volatile int moveDir;          // 0: stop, 1: forward, 2: reverse, 3: left, 4: right
+
+//================ simulation variables =============
+
+// time
 int t = 0;
 
 void setupSensor()
@@ -60,107 +87,205 @@ void setupSensor()
   lsm.setupAccel(lsm.LSM9DS0_ACCELRANGE_2G);
 }
 
+//================ setup ============================
+
+/* Set up & initialize pins, check accelerometer status,
+ * set initial accelerometer values for filtering, reset
+ * servo positions.
+ */
 void setup() {
   Serial.begin(9600);
   xbee.setSerial(Serial);
-  
+
+  // initialize XBee and accelerometer pins
   pinMode(STATUS_LED_PIN, OUTPUT);
-  pinMode(FLEX_SENSOR_HIGH, OUTPUT);
-  pinMode(FLEX_SENSOR_LOW, OUTPUT);
   pinMode(ACCEL_SUPPLY, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
-  digitalWrite(FLEX_SENSOR_HIGH, HIGH);
-  digitalWrite(FLEX_SENSOR_LOW, LOW);
   digitalWrite(ACCEL_SUPPLY, HIGH);
-  
+
+  // initialize flex sensor pins
+  for (int i = 0; i < 3; i++) {
+    pinMode(FLEX_SENSOR_HIGH[i], OUTPUT);
+    pinMode(FLEX_SENSOR_LOW[i], OUTPUT);
+    digitalWrite(FLEX_SENSOR_HIGH[i], HIGH);
+    digitalWrite(FLEX_SENSOR_LOW[i], LOW);
+  }
+
+  // reset servo positions to origin
   positionReset();
+
+  // check accelerometer status
   if(!lsm.begin())
   {
     while(1);
   }
-  
-  delay(5000);
 
+  // delay for XBee startup
+  delay(2000);
+
+  // initialize accelerometer values for filtering
   lsm.read();
   prevAccel[0] = (lsm.accelData.x - ACCEL_BIAS[0]) / ACCEL_SENSITIVITY[0];
   prevAccel[1] = (lsm.accelData.y - ACCEL_BIAS[1]) / ACCEL_SENSITIVITY[1];
   prevAccel[2] = (lsm.accelData.z - ACCEL_BIAS[2]) / ACCEL_SENSITIVITY[2];
 }
 
+//================ main loop ========================
+
+/* Retrieve readings from sensors, calculate desired 
+ * coordinates/servo positions, and then pack and send 
+ * data.
+ */
 void loop() {
-  //simulateControl();
+  //demo1();
+
+  // get sensor readings
   readSensors();
+
+  // calculate desired coordinates based on sensor readings
   calculatePosition();
+
+  // pack all commands to be sent
   pack();
+
+  // send data
   xbee.send(tx);
+
+  // verify data has been received and display status through LED
   verifyResponse();
 }
 
+//================ reset arm position ===============
+
+/* Reset position of all servos and command variables
+ * to a safe/known region (origin).
+ */
 void positionReset() {
   desiredA = DESIREDA_MIN;
   desiredB = 0;
   desiredY = 0;
+  desiredClawRot = 0;
   claw = 1;
   moveDir = 0;
+  mode = 0;
 }
 
+//================ read sensor signal ===============
+
+/* Read accelerometer and flex sensor data. */
 void readSensors(){
   lsm.read();
 
+  // low pass filter coefficient
   double a = 0.1;
 
+  // convert accelerometer reading to gravity unit
   accel[0] = (lsm.accelData.x - ACCEL_BIAS[0]) / ACCEL_SENSITIVITY[0];
   accel[1] = (lsm.accelData.y - ACCEL_BIAS[1]) / ACCEL_SENSITIVITY[1];
   accel[2] = (lsm.accelData.z - ACCEL_BIAS[2]) / ACCEL_SENSITIVITY[2];
 
+  // low pass filter
   for (int i = 0; i < 3; i++) {
     accel[i] = (1 - a) * prevAccel[i] + a * accel[i];
     prevAccel[i] = accel[i];
   }
 
-  pitch = atan2(accel[1], -accel[2]) * 180 / pi;
-  roll = atan2(-accel[0], sqrt(pow(accel[1],2) + pow(accel[2],2))) * 180 / pi;
+  // calculate pitch and roll
+  roll = atan2(accel[1], -accel[2]) * 180 / pi;
+  pitch = atan2(-accel[0], sqrt(pow(accel[1],2) + pow(accel[2],2))) * 180 / pi;
 
-  int flex = map(analogRead(FLEX_SENSOR_PIN), 200, 400, 0, 2);
+  // retrieve flex sensor voltage reading
+  int flex0 = map(analogRead(FLEX_SENSOR_PIN[0]), 450, 560, 0, 10);
+  int flex1 = map(analogRead(FLEX_SENSOR_PIN[1]), 200, 500, 0, 10);
+  int flex2 = map(analogRead(FLEX_SENSOR_PIN[2]), 350, 510, 0, 10);
 
-  if (flex == 0) {
+  // set arm movement mode based on flex0 reading
+  mode = (flex0 <= 3) ? 1 : 0;
+
+  // reset position if flex1 is bent to certain degree
+  if (flex1 <= 1) {
     positionReset();
   }
-  claw = (flex <= 1) ? 1 : 0;
+
+  // close claw if flex1 is bent to certain degree
+  claw = (flex1 <= 5) ? 1 : 0;
+
+  // rotate claw if flex2 is bent or unbent to certain degree
+  if (flex2 <= 2) {
+    desiredClawRot++;
+  } else if (flex2 >= 8) {
+    desiredClawRot--;
+  }
 }
 
+//================ calculate coordinates ===============
+
+/* Calculate desired coordinates based on sensor signal. */
 void calculatePosition() {
-  if (abs(pitch) > 5) {
-    desiredB = desiredB + pitch * 0.005;
-  }
+  // when hand is tilted left/right
   if (abs(roll) > 5) {
-    desiredA = desiredA - roll * 0.005;
+    if (mode == 0) {
+      desiredB = desiredB + roll * 0.005;
+    }
   }
+  
+  // when hand is tilted up/down
+  if (abs(pitch) > 5) {
+    if (mode == 1) {
+      desiredY = desiredY + pitch * 0.005;
+    } else {
+      desiredA = desiredA - pitch * 0.005;
+    }
+  }
+
+  // safety
   desiredA = (desiredA > DESIREDA_MAX) ? DESIREDA_MAX : desiredA;
   desiredA = (desiredA < DESIREDA_MIN) ? DESIREDA_MIN : desiredA;
   desiredB = (desiredB > DESIREDB_MAX) ? DESIREDB_MAX : desiredB;
   desiredB = (desiredB < DESIREDB_MIN) ? DESIREDB_MIN : desiredB;
+  desiredY = (desiredY > DESIREDY_MAX) ? DESIREDY_MAX : desiredY;
+  desiredY = (desiredY < DESIREDY_MIN) ? DESIREDY_MIN : desiredY;
+  desiredClawRot = (desiredClawRot > DESIREDCLAWROT_MAX) ? DESIREDCLAWROT_MAX : desiredClawRot;
+  desiredClawRot = (desiredClawRot < DESIREDCLAWROT_MIN) ? DESIREDCLAWROT_MIN : desiredClawRot;
 
-  desiredY = 0;
-
+  // convert (A, B) Cartesian coordinate to (X, rot) polar coordinate
   desiredX = sqrt(pow(desiredA, 2) + pow(desiredB, 2)) - ARM_12_LENGTH;
   desiredRot = atan2(desiredA, desiredB) * 180 / pi;
 }
 
+//================ pack contoller signal ===============
+
+/* Pack signal to be sent.
+ * Signal structure:
+ *    [0]: sign of desiredX coordinate
+ *    [1]: value of desiredX * 10
+ *    [2]: sign of desiredY coordinate
+ *    [3]: value of desiredY * 10
+ *    [4]: value of desiredRot (base angle)
+ *    [5]: value of desiredClawRot (claw angle)
+ *    [6]: claw open/shut
+ *    [7]: vehicle movement direction
+ */
 void pack() {
   payload[0] = (desiredX >= 0) ? 0 : 1;
   payload[1] = abs(int(desiredX * 10));
   payload[2] = (desiredY >= 0) ? 0 : 1;
   payload[3] = abs(int(desiredY * 10));
   payload[4] = int(desiredRot);
-  payload[5] = claw;
-  payload[6] = moveDir;
+  payload[5] = int(desiredClawRot);
+  payload[6] = claw;
+  payload[7] = moveDir;
 }
 
+//================ verify remote response ==============
+
+/* Verify robotic arm has received controller signal. */
 void verifyResponse() {
   if (xbee.readPacket(5000)) {
     if (xbee.getResponse().getApiId() == TX_STATUS_RESPONSE) {
       xbee.getResponse().getZBTxStatusResponse(txStatus);
+
+      // turn on LED if success
       if (txStatus.getStatus() == SUCCESS) {
         digitalWrite(STATUS_LED_PIN, HIGH);
       } else {
@@ -172,25 +297,46 @@ void verifyResponse() {
   }
 }
 
-void simulateControl() {
+//================ automated demo ======================
+
+/* Perform pre-planned path.
+ * (not used in normal mode)
+ */
+void demo1() {
   t++;
-  double deg = t * pi / 180;
-  desiredA = 18;
-  desiredB = 0;
-
-  desiredY = 0;
-
+  if (t < 100) {
+    claw = 0;
+    SimMoveTo(18, -10, 1, 0, 100 - t);
+  } else if (t < 200) {
+    SimMoveTo(24, -10, 1, 0, 200 - t);
+  } else if (t < 300) {
+    claw = 1;
+    SimMoveTo(24, -10, 10, 0, 300 - t);
+  } else if (t < 400) {
+    SimMoveTo(18, 3, 10, 0, 400 - t);
+  } else if (t < 600) {
+    SimMoveTo(18, 7, 0, 180, 600 - t);
+  } else if (t < 700) {
+    SimMoveTo(26, -10, 6, 0, 700 - t);
+  } else if (t < 800) {
+    claw = 0;
+    SimMoveTo(18, -10, 4, 0, 800 - t);
+  } else if (t < 900) {
+    SimMoveTo(18,0, 0, 0, 900 - t);
+  }
   desiredX = sqrt(pow(desiredA, 2) + pow(desiredB, 2)) - ARM_12_LENGTH;
   desiredRot = atan2(desiredA, desiredB) * 180 / pi;
+}
 
-//  double speed = 2;
-//  double radius = 8;
-//  double deg = t * pi / 180;
-//  desiredY = radius * sin(deg * speed) + radius - 6;
-//  desiredX = 7;
-//  desiredRot = abs(int(t * speed) % 360 - 180) / 5 + 72;
-//
-//  int flex = map(analogRead(FLEX_SENSOR_PIN), 240, 500, 0, 2);
-//  claw = (flex <= 1) ? 1 : 0;
+//================ demo helper function ================
+
+/* Go to planned location with given speed.
+ * (not used in normal mode)
+ */
+void SimMoveTo(double goalA, double goalB, double goalY, double goalClawRot, int goalCycles){
+  desiredA = desiredA + (goalA - desiredA) / goalCycles;
+  desiredB = desiredB + (goalB - desiredB) / goalCycles;
+  desiredY = desiredY + (goalY - desiredY) / goalCycles;
+  desiredClawRot = desiredClawRot + (goalClawRot - desiredClawRot) / goalCycles;
 }
 
