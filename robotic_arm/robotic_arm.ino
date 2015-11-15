@@ -26,13 +26,6 @@ const double ARM_9_LENGTH = 10.4;
 const double ARM_10_LENGTH = 9.8;
 //pi
 const double pi = 3.14;
-//reach
-const int DESIREDY_MIN = -10;
-const int DESIREDY_MAX = 12;
-const int DESIREDX_MIN = 4;
-const int DESIREDX_MAX = 16;
-const int DESIREDROT_MAX = 180;
-const int DESIREDROT_MIN = 0;
 
 //================ servo/motor variables ============
 
@@ -162,11 +155,11 @@ void calculateAngles() {
   double thetaDesired = atan2(desiredY, desiredX) * 180 / pi;
   double thetaA = acos((pow(ARM_9_LENGTH, 2) - pow(ARM_10_LENGTH, 2) + pow(distance, 2)) / (2 * ARM_9_LENGTH * distance)) * 180 / pi;
   double thetaB = acos((pow(ARM_9_LENGTH, 2) + pow(ARM_10_LENGTH, 2) - pow(distance, 2)) / (2 * ARM_9_LENGTH * ARM_10_LENGTH)) * 180 / pi;
-  servo_angle_desired[0] = double(desiredRot) / (DESIREDROT_MAX - DESIREDROT_MIN) * (SERVO_ANGLE_MAX[0] - SERVO_ANGLE_MIN[0]) + SERVO_ANGLE_MIN[0];
+  servo_angle_desired[0] = desiredRot;
   servo_angle_desired[1] = 180 - (thetaA + thetaDesired);
   servo_angle_desired[2] = thetaB;
   servo_angle_desired[3] = thetaA + thetaB + thetaDesired;
-  servo_angle[5] = (claw == 1) ? SERVO_ANGLE_MAX[5] : SERVO_ANGLE_MIN[5];
+  servo_angle_desired[5] = (claw == 1) ? SERVO_ANGLE_MAX[5] : SERVO_ANGLE_MIN[5];
 }
 
 void getSignal() {
