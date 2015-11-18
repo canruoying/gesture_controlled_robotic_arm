@@ -1,9 +1,16 @@
+/**
+ * EECS 149 Fa-15 Final Project
+ * Real-time Remote Controlled Robotic Arm
+ * Authors: Iraida Ermakova, Canruo Ying
+ * 
+ * This file is for the remote controller (user side).
+ */
+
 #include <XBee.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <Adafruit_LSM9DS0.h>
 #include <Adafruit_Sensor.h>
-
 
 //================ accelerometer constants ==========
 
@@ -57,12 +64,19 @@ TxStatusResponse txStatus = TxStatusResponse();
 
 Adafruit_LSM9DS0 lsm = Adafruit_LSM9DS0(LSMSCLK, LSMMISO, LSMMOSI, LSMXMCS, LSMGCS);
 // accelerometer data
-double accel[3];
+volatile double accel[3];
 // previous accelerometer data for filtering
-double prevAccel[3] = {0, 0, 0};
+volatile double prevAccel[3] = {0, 0, 0};
 // pitch/roll angles
 double pitch;
 double roll;
+
+//================ flex sensor variables ============
+
+// flex sensor data
+double flex[3];
+// previous sensor data for filtering
+double prevFlex[3];
 
 //================ servo/motor variables ============
 
@@ -73,7 +87,6 @@ volatile double desiredX;      // pos: forward (minus arm 12 length from A), neg
 volatile double desiredY;      // pos: above, neg: below
 volatile double desiredRot;    // 0: starboard, 180: port
 volatile double desiredClawRot;// 0: servo above, 180: servo below
-volatile double mode;          // 0: control AB axes, 1: control Y axes
 volatile int claw;             // 0: open, 1:closed
 volatile int moveDir;          // 0: stop, 1: forward, 2: reverse, 3: left, 4: right
 
@@ -90,8 +103,7 @@ void setupSensor()
 //================ setup ============================
 
 /* Set up & initialize pins, check accelerometer status,
- * set initial accelerometer values for filtering, reset
- * servo positions.
+ * reset servo positions.
  */
 void setup() {
   Serial.begin(9600);
@@ -122,12 +134,6 @@ void setup() {
 
   // delay for XBee startup
   delay(2000);
-
-  // initialize accelerometer values for filtering
-  lsm.read();
-  prevAccel[0] = (lsm.accelData.x - ACCEL_BIAS[0]) / ACCEL_SENSITIVITY[0];
-  prevAccel[1] = (lsm.accelData.y - ACCEL_BIAS[1]) / ACCEL_SENSITIVITY[1];
-  prevAccel[2] = (lsm.accelData.z - ACCEL_BIAS[2]) / ACCEL_SENSITIVITY[2];
 }
 
 //================ main loop ========================
@@ -167,7 +173,6 @@ void positionReset() {
   desiredClawRot = 0;
   claw = 1;
   moveDir = 0;
-  mode = 0;
 }
 
 //================ read sensor signal ===============
@@ -176,52 +181,58 @@ void positionReset() {
 void readSensors(){
   lsm.read();
 
-  // low pass filter coefficient
+  // low pass filter coefficients
   double a = 0.1;
+  double b = 0.5;
 
   // convert accelerometer reading to gravity unit
   accel[0] = (lsm.accelData.x - ACCEL_BIAS[0]) / ACCEL_SENSITIVITY[0];
   accel[1] = (lsm.accelData.y - ACCEL_BIAS[1]) / ACCEL_SENSITIVITY[1];
   accel[2] = (lsm.accelData.z - ACCEL_BIAS[2]) / ACCEL_SENSITIVITY[2];
 
+  // retrieve flex sensor voltage reading
+  flex[0] = map(analogRead(FLEX_SENSOR_PIN[0]), 450, 560, 0, 10);
+  flex[1] = map(analogRead(FLEX_SENSOR_PIN[1]), 200, 500, 0, 10);
+  flex[2] = map(analogRead(FLEX_SENSOR_PIN[2]), 350, 510, 0, 10);
+
   // low pass filter
   for (int i = 0; i < 3; i++) {
     accel[i] = (1 - a) * prevAccel[i] + a * accel[i];
     prevAccel[i] = accel[i];
+    flex[i] = (1 - b) * prevFlex[i] + b * flex[i];
+    prevFlex[i] = flex[i];
   }
 
   // calculate pitch and roll
   roll = atan2(accel[1], -accel[2]) * 180 / pi;
   pitch = atan2(-accel[0], sqrt(pow(accel[1],2) + pow(accel[2],2))) * 180 / pi;
-
-  // retrieve flex sensor voltage reading
-  int flex0 = map(analogRead(FLEX_SENSOR_PIN[0]), 450, 560, 0, 10);
-  int flex1 = map(analogRead(FLEX_SENSOR_PIN[1]), 200, 500, 0, 10);
-  int flex2 = map(analogRead(FLEX_SENSOR_PIN[2]), 350, 510, 0, 10);
-
-  // set arm movement mode based on flex0 reading
-  mode = (flex0 <= 3) ? 1 : 0;
-
-  // reset position if flex1 is bent to certain degree
-  if (flex1 <= 1) {
-    positionReset();
-  }
-
-  // close claw if flex1 is bent to certain degree
-  claw = (flex1 <= 5) ? 1 : 0;
-
-  // rotate claw if flex2 is bent or unbent to certain degree
-  if (flex2 <= 2) {
-    desiredClawRot++;
-  } else if (flex2 >= 8) {
-    desiredClawRot--;
-  }
 }
 
-//================ calculate coordinates ===============
+//================ calculate coordinates ============
 
 /* Calculate desired coordinates based on sensor signal. */
 void calculatePosition() {
+  // set arm movement mode based on flex0 reading
+  // 0: control AB axes, 1: control Y axes, 2: control vehicle
+  int mode = (flex[0] <= 3) ? 1 : 0;
+
+  // switch to vehicle mode if flex1 is bent to certain degree
+  if (flex[1] <= 1) {
+    mode = 2;
+  } else {
+    moveDir = 0;
+  }
+
+  // close claw if flex1 is bent to certain degree
+  claw = (flex[1] <= 5) ? 1 : 0;
+
+  // rotate claw if flex2 is bent or unbent to certain degree
+  if (flex[2] <= 2) {
+    desiredClawRot++;
+  } else if (flex[2] >= 8) {
+    desiredClawRot--;
+  }
+
   // when hand is tilted left/right
   if (abs(roll) > 5) {
     if (mode == 0) {
@@ -231,10 +242,21 @@ void calculatePosition() {
   
   // when hand is tilted up/down
   if (abs(pitch) > 5) {
-    if (mode == 1) {
-      desiredY = desiredY + pitch * 0.005;
-    } else {
+    if (mode == 0) {
       desiredA = desiredA - pitch * 0.005;
+    } else if (mode == 1) {
+      desiredY = desiredY + pitch * 0.005;
+    }
+  }
+
+  // vehicle control
+  if (mode == 2) {
+    if (abs(roll) > 25) {
+      moveDir = (roll > 0) ? 4 : 3;
+    } else if (abs(pitch) > 10) {
+      moveDir = (pitch > 0) ? 2 : 1;
+    } else {
+      moveDir = 0;
     }
   }
 
@@ -253,7 +275,7 @@ void calculatePosition() {
   desiredRot = atan2(desiredA, desiredB) * 180 / pi;
 }
 
-//================ pack contoller signal ===============
+//================ pack contoller signal ============
 
 /* Pack signal to be sent.
  * Signal structure:
@@ -277,7 +299,7 @@ void pack() {
   payload[7] = moveDir;
 }
 
-//================ verify remote response ==============
+//================ verify remote response ===========
 
 /* Verify robotic arm has received controller signal. */
 void verifyResponse() {
@@ -297,7 +319,7 @@ void verifyResponse() {
   }
 }
 
-//================ automated demo ======================
+//================ automated demo ===================
 
 /* Perform pre-planned path.
  * (not used in normal mode)
@@ -328,7 +350,7 @@ void demo1() {
   desiredRot = atan2(desiredA, desiredB) * 180 / pi;
 }
 
-//================ demo helper function ================
+//================ demo helper function =============
 
 /* Go to planned location with given speed.
  * (not used in normal mode)

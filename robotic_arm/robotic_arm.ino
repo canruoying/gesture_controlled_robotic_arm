@@ -1,3 +1,11 @@
+/**
+ * EECS 149 Fa-15 Final Project
+ * Real-time Remote Controlled Robotic Arm
+ * Authors: Iraida Ermakova, Canruo Ying
+ * 
+ * This file is for the local controller (robot side).
+ */
+
 #include <Servo.h>
 #include <XBee.h>
 
